@@ -1,3 +1,4 @@
-torch>=1.10.0
-transformers>=4.0.0
-Pillow>=8.0.0
+torch==1.13.1+cpu  # CPU-only version saves ~1.5GB
+-f https://download.pytorch.org/whl/cpu/torch_stable.html
+pillow==9.5.0
+transformers==4.30.2
