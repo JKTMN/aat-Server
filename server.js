@@ -1,75 +1,47 @@
 /**
- * Acts as an API server for running accessibility audits using aXe.
- * @param {req} String - The URL passed in the request body.
- * @param {res} Object - The response object.
- * @returns {Object} - Returns an object containing the violations found in the audit.
- * Based on {@link https://github.com/dequelabs/axe-puppeteer}
- * 
- * @see https://www.npmjs.com/package/validator
+ * Heroku-ready server configuration with accessibility audit and image captioning endpoints
+ * @see https://devcenter.heroku.com/articles/nodejs-support
  */
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { AxePuppeteer } = require('axe-puppeteer');
 const cors = require('cors');
-// const fetch = require('node-fetch');
-require('dotenv').config();
-const fileUpload = require('express-fileupload');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const { isURL } = require('validator');
+const fileUpload = require('express-fileupload');
+const path = require('path');
 
+if (process.env.NODE_ENV !== 'production') require('dotenv').config();
 const app = express();
-const port = 3001;
+const port = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(fileUpload());
-app.use(cors());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? process.env.FRONTEND_URL 
+    : '*'
+}));
 
 const validMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
-
-const path = require('path');
 const uploadDir = './uploads';
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir);
-}
-
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'OK' });
+  res.status(200).json({ status: 'OK', environment: process.env.NODE_ENV || 'development' });
 });
 
-
-const formatResults = async (items, pageUrl = '') => {
-        const results = await Promise.all(items.map(async item => {
-        const formattedItem = {
-            id: item.id,
-            impact: item.impact || 'N/A',
-            description: item.description || 'No description available',
-            help: item.help,
-            helpUrl: item.helpUrl,
-            tags: item.tags || [],
-            pageUrl: pageUrl || '',
-            nodes: item?.nodes.map(node => ({
-            html: node?.html || "No HTML available",
-            message: Array.isArray(node?.any) && node.any.length > 0
-                ? node.any.map(error => error.message).join(', ')
-                : "Error message not available",
-            target: node?.target || "No target available"
-            })) || [],
-        };
-    
-        return formattedItem;
-        }));
-    
-        return results;
-    };
-
-
-
-
-
 const runAccessibilityAudit = async (url) => {
-    const browser = await puppeteer.launch();
+    const browser = await puppeteer.launch({
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage'
+        ],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH
+      });
+
     const page = await browser.newPage();
     await page.goto(url);
 
@@ -91,8 +63,6 @@ const runAccessibilityAudit = async (url) => {
         }))
     };
 };
-
-
 
 app.post('/api/audit', async (req, res) => {
     const { url } = req.body;
@@ -148,8 +118,6 @@ app.post('/api/caption/file', async (req, res) => {
       res.status(500).send('Server error');
     }
   });
-  
-
 
 
 
@@ -196,34 +164,6 @@ app.post('/api/caption/source', async (req, res) => {
       res.status(500).send(`URL processing failed: ${err.message}`);
     }
   });
-
-
-
-
-
-const scrapeImageSources = async (url) => {
-    const browser = await puppeteer.launch();
-    const page = await browser.newPage();
-    
-    try {
-        await page.goto(url);
-        const images = await page.$$eval('img', (imgs, pageUrl) => {
-            return imgs.map(img => {
-                try {
-                    const resolvedUrl = new URL(img.src, pageUrl).href;
-                    return { src: resolvedUrl, valid: true };
-                } catch (e) {
-                    return { src: img.src, valid: false, error: e.message };
-                }
-            });
-        }, url);
-        
-        return images.filter(img => img.valid);
-    } finally {
-        await browser.close();
-    }
-};
-
 
 
 
@@ -312,6 +252,57 @@ app.post('/api/captions/website', async (req, res) => {
 });
 
 
-app.listen(port, '0.0.0.0',() => {
-    console.log(`Server running at http://localhost:${port}`);
+
+
+const formatResults = async (items, pageUrl = '') => {
+    const results = await Promise.all(items.map(async item => {
+    const formattedItem = {
+        id: item.id,
+        impact: item.impact || 'N/A',
+        description: item.description || 'No description available',
+        help: item.help,
+        helpUrl: item.helpUrl,
+        tags: item.tags || [],
+        pageUrl: pageUrl || '',
+        nodes: item?.nodes.map(node => ({
+        html: node?.html || "No HTML available",
+        message: Array.isArray(node?.any) && node.any.length > 0
+            ? node.any.map(error => error.message).join(', ')
+            : "Error message not available",
+        target: node?.target || "No target available"
+        })) || [],
+    };
+
+    return formattedItem;
+    }));
+
+    return results;
+};
+
+
+const scrapeImageSources = async (url) => {
+    const browser = await puppeteer.launch();
+    const page = await browser.newPage();
+    
+    try {
+        await page.goto(url);
+        const images = await page.$$eval('img', (imgs, pageUrl) => {
+            return imgs.map(img => {
+                try {
+                    const resolvedUrl = new URL(img.src, pageUrl).href;
+                    return { src: resolvedUrl, valid: true };
+                } catch (e) {
+                    return { src: img.src, valid: false, error: e.message };
+                }
+            });
+        }, url);
+        
+        return images.filter(img => img.valid);
+    } finally {
+        await browser.close();
+    }
+};
+
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${port}`);
 });
