@@ -11,6 +11,7 @@ const fs = require('fs');
 const { isURL } = require('validator');
 const fileUpload = require('express-fileupload');
 const path = require('path');
+const fetch = require('node-fetch');
 
 if (process.env.NODE_ENV !== 'production') require('dotenv').config();
 const app = express();
@@ -23,6 +24,12 @@ app.use(cors({
     ? process.env.FRONTEND_URL 
     : '*'
 }));
+
+process.on('exit', () => {
+  if (fs.existsSync(uploadDir)) {
+    fs.rmSync(uploadDir, { recursive: true, force: true });
+  }
+});
 
 const validMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const uploadDir = './uploads';
@@ -281,7 +288,14 @@ const formatResults = async (items, pageUrl = '') => {
 
 
 const scrapeImageSources = async (url) => {
-    const browser = await puppeteer.launch();
+    const browser = await puppeteer.launch({
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage'
+      ],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH
+    });
     const page = await browser.newPage();
     
     try {
